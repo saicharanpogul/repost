@@ -1,0 +1,22 @@
+{
+  "name": "repost-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "repost retrieval+synthesis engine — turns 'what did {person} say about {topic}' into a sourced answer",
+  "bin": {
+    "repost": "./cli.mjs",
+    "repost-mcp": "./mcp.mjs"
+  },
+  "scripts": {
+    "start": "node cli.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}
