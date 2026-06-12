@@ -29,7 +29,8 @@ into a trustworthy, sourced answer about who said what.** That's what this build
 
 | Path | What |
 |------|------|
-| [`engine/`](engine/) | Retrieval+synthesis core, CLI, and the MCP server. Start here. |
+| [`engine/`](engine/) | Retrieval+synthesis core, CLI, and the MCP server (BYO-key, agent-facing). |
+| [`web/`](web/) | repost.blog — the hosted Next.js app + Supabase corpus + open API. |
 | [`spike/`](spike/) | One-off X API viability probe (recent + full-archive, cost check). |
 
 ## Quick start
