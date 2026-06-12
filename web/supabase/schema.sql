@@ -20,6 +20,9 @@ create table if not exists public.briefs (
   model       text not null,
   window      text not null default 'both',  -- recent | archive | both
   as_of       timestamptz not null,          -- when the underlying data was fetched
+  contributed_by text,                        -- authenticated contributor (publish-token label)
+  client      text,                           -- publishing client, e.g. 'repost-mcp/0.1.0'
+  verified    boolean not null default false, -- sources spot-checked against X (future)
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );

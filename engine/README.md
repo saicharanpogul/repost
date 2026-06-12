@@ -84,6 +84,25 @@ transport) with `X_BEARER_TOKEN` in the server env. The tool input:
 It returns a one-line summary plus a JSON payload of posts (`date`, `kind`,
 `text`, `url`). Your agent reasons over that — the server never calls an LLM.
 
+## Publish to the corpus (repost.blog)
+
+Generation runs on your keys; the website is read-only. Publish a synthesized
+brief to the shared corpus so it shows up on repost.blog for everyone:
+
+```bash
+export REPOST_PUBLISH_TOKEN="<your contributor token>"   # from the allowlist
+# export REPOST_PUBLISH_URL="https://repost.blog"        # default
+node cli.mjs -p paulg -t "ai agents" --synthesize --publish
+```
+
+`--publish` requires `--synthesize` (you publish prose, not raw posts). The brief
+is attributed to your token and must cite real `x.com` source links.
+
+From an agent via MCP, there's a **`repost_publish`** tool: after `repost_search`
+and writing a summary in your own context, call `repost_publish` with the
+`summary_md` + `sources` to contribute — no Anthropic key anywhere. Set
+`REPOST_PUBLISH_TOKEN` (and optionally `REPOST_PUBLISH_URL`) in the MCP server env.
+
 ## Why `--terms`
 
 Naive keyword search misses most relevant posts — people say "autonomous

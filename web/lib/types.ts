@@ -12,6 +12,9 @@ export type Brief = {
   model: string;
   window: BriefWindow;
   asOf: string; // ISO timestamp of the underlying data
+  contributedBy?: string; // authenticated contributor (publish-token label)
+  client?: string; // which client published it, e.g. "repost-mcp/0.1.0"
+  verified?: boolean; // sources spot-checked against X (future)
   createdAt?: string;
   updatedAt?: string;
 };

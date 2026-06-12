@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import BriefBody from "@/app/components/BriefBody";
-import GenerateCTA from "@/app/components/GenerateCTA";
+import GenerateLocally from "@/app/components/GenerateLocally";
 import { getBriefBySlug, isStale } from "@/lib/brief";
 import { normalizeHandle, deslugTopic } from "@/lib/slug";
 import type { Brief } from "@/lib/types";
@@ -44,7 +44,7 @@ export default async function BriefPage({ params }: { params: Promise<Params> })
           @{person} · {topicGuess}
         </h1>
         <div className="mt-6">
-          <GenerateCTA person={person} topic={topicGuess} />
+          <GenerateLocally person={person} topic={topicGuess} />
         </div>
       </article>
     );
@@ -65,6 +65,15 @@ export default async function BriefPage({ params }: { params: Promise<Params> })
           As of {asOf} · {brief.model} · {sourceLine(brief)}
           {stale && " · may be outdated"}
         </p>
+        {brief.contributedBy && (
+          <p className="mt-1 text-xs text-muted">
+            Contributed by @{brief.contributedBy}
+            {brief.client ? ` via ${brief.client}` : ""} ·{" "}
+            <span className={brief.verified ? "text-foreground" : ""}>
+              {brief.verified ? "sources verified" : "sources unverified"}
+            </span>
+          </p>
+        )}
       </header>
 
       <div className="mt-8">

@@ -77,6 +77,54 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "repost_publish",
+  {
+    title: "Publish a brief to repost.blog",
+    description:
+      "Contribute a synthesized brief to the public corpus at repost.blog, after you've used repost_search and written a summary. " +
+      "Requires a contributor token (REPOST_PUBLISH_TOKEN) on the server. " +
+      "summary_md must PARAPHRASE (never paste raw tweets) and cite the source links inline. " +
+      "Pass the exact x.com status links your summary is based on in `sources` — claims must be checkable.",
+    inputSchema: {
+      person: z.string().describe("X handle, with or without @"),
+      topic: z.string().describe("the topic this brief covers"),
+      summary_md: z.string().describe("your synthesized markdown summary (paraphrased, with inline source links)"),
+      sources: z
+        .array(z.object({ url: z.string(), date: z.string().optional(), kind: z.string().optional() }))
+        .describe("the x.com status links the summary is based on"),
+      window: z.enum(["recent", "archive", "both"]).optional(),
+      terms: z.array(z.string()).optional(),
+    },
+  },
+  async ({ person, topic, summary_md, sources, window, terms }) => {
+    const token = process.env.REPOST_PUBLISH_TOKEN;
+    const base = (process.env.REPOST_PUBLISH_URL || "https://repost.blog").replace(/\/$/, "");
+    if (!token) {
+      return { isError: true, content: [{ type: "text", text: "repost: REPOST_PUBLISH_TOKEN not set — cannot publish." }] };
+    }
+    try {
+      const res = await fetch(`${base}/api/contribute`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+          "x-repost-client": "repost-mcp/0.1.0",
+        },
+        body: JSON.stringify({ person, topic, summary_md, sources, window, terms, model: "agent" }),
+      });
+      let data = {};
+      try { data = await res.json(); } catch { /* non-JSON */ }
+      if (!res.ok || !data.ok) {
+        return { isError: true, content: [{ type: "text", text: `repost publish failed: ${data.reason || res.status}` }] };
+      }
+      return { content: [{ type: "text", text: `Published: ${data.url}` }] };
+    } catch (e) {
+      return { isError: true, content: [{ type: "text", text: `repost publish error: ${e.message}` }] };
+    }
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 // stderr is safe for logs; stdout is the JSON-RPC channel — never write to it.

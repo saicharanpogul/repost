@@ -8,7 +8,7 @@
 // SYNTHESIS mode (opt-in, needs ANTHROPIC_API_KEY) additionally writes a
 // transformed, sourced prose brief — the blog/hosted surface for humans.
 
-import { llmAvailable, expandQuery, synthesize } from "./anthropic.mjs";
+import { llmAvailable, expandQuery, synthesize, SYNTHESIS_MODEL } from "./anthropic.mjs";
 import { fetchTweets } from "./x-client.mjs";
 import { cacheKey, readCache, writeCache } from "./cache.mjs";
 
@@ -81,6 +81,8 @@ export async function runEngine({
     person: handle,
     topic,
     mode,
+    window,
+    model: doSynth ? SYNTHESIS_MODEL : null,
     generatedAt: new Date().toISOString(),
     // Structured posts for the calling agent (includes text — this is the
     // user's own key, personal use; returning content is the whole point).

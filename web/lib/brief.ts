@@ -1,36 +1,24 @@
-// Brief orchestration: the on-demand + cache path.
-// getOrGenerateBrief checks the DB first; on a miss or a stale row it expands
-// the topic, fetches topic-scoped posts, synthesizes, and upserts a transformed
-// brief (summary + source links — never raw tweet bodies).
+// Brief data access for the READ-ONLY site, plus the validated write path used
+// by /api/contribute (clients publish briefs they generated locally).
+//
+// The server never generates a brief. It stores what allowlisted contributors
+// publish, after validation.
 
 import { supabaseAdmin, supabaseRead } from "./supabase";
-import { fetchTweets, type Tweet } from "./x";
-import { expandQuery, synthesize, SYNTHESIS_MODEL } from "./synthesize";
 import { briefSlug, normalizeHandle } from "./slug";
-import { assertGenerationEnv } from "./env";
 import type { Brief, BriefWindow, Source } from "./types";
 
 const TTL_MS: Record<BriefWindow, number> = {
-  recent: 6 * 3600_000, // "recent" goes stale fast
+  recent: 6 * 3600_000,
   archive: 7 * 24 * 3600_000,
   both: 7 * 24 * 3600_000,
 };
 
-const KIND_PRIORITY: Record<string, number> = { authored: 0, quote: 1, reply: 2, retweet: 3 };
+const KINDS = new Set(["authored", "retweet", "quote", "reply"]);
 
 export function isStale(b: Brief): boolean {
   const age = Date.now() - new Date(b.asOf).getTime();
   return age > (TTL_MS[b.window] ?? TTL_MS.both);
-}
-
-function rank(tweets: Tweet[], cap = 40): Tweet[] {
-  return [...tweets]
-    .sort((a, b) => {
-      const k = (KIND_PRIORITY[a.kind] ?? 9) - (KIND_PRIORITY[b.kind] ?? 9);
-      if (k !== 0) return k;
-      return String(b.date || "").localeCompare(String(a.date || ""));
-    })
-    .slice(0, cap);
 }
 
 function rowToBrief(r: any): Brief {
@@ -46,10 +34,15 @@ function rowToBrief(r: any): Brief {
     model: r.model,
     window: r.window,
     asOf: r.as_of,
+    contributedBy: r.contributed_by,
+    client: r.client,
+    verified: r.verified,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
 }
+
+// ---- Reads (public) ----
 
 export async function getBriefBySlug(slug: string): Promise<Brief | null> {
   const { data, error } = await supabaseRead().from("briefs").select("*").eq("slug", slug).maybeSingle();
@@ -78,20 +71,91 @@ export async function listBriefsByPerson(person: string, limit = 50): Promise<Br
   return (data || []).map(rowToBrief);
 }
 
-async function upsertBrief(b: Brief): Promise<Brief> {
+// ---- Write (validated, via /api/contribute) ----
+
+export type Contribution = {
+  person: string;
+  topic: string;
+  summary_md: string;
+  sources: Source[];
+  terms?: string[];
+  counts?: Record<string, number>;
+  model?: string;
+  window?: string;
+  as_of?: string;
+};
+
+export class ValidationError extends Error {}
+
+const MAX_SUMMARY = 24000;
+const MAX_SOURCES = 200;
+
+function validate(c: Contribution): {
+  person: string;
+  topic: string;
+  slug: string;
+  summaryMd: string;
+  sources: Source[];
+  window: BriefWindow;
+} {
+  const person = normalizeHandle(c.person || "");
+  const topic = (c.topic || "").trim();
+  const summaryMd = (c.summary_md || "").trim();
+
+  if (!person) throw new ValidationError("person is required");
+  if (!topic) throw new ValidationError("topic is required");
+  if (!summaryMd) throw new ValidationError("summary_md is required");
+  if (summaryMd.length > MAX_SUMMARY) throw new ValidationError("summary_md too long");
+
+  if (!Array.isArray(c.sources) || c.sources.length === 0) {
+    throw new ValidationError("at least one source is required");
+  }
+  if (c.sources.length > MAX_SOURCES) throw new ValidationError("too many sources");
+
+  // Every source must be a real X status link — keeps this a commentary layer
+  // that cites X, and makes claims checkable.
+  const sources: Source[] = c.sources.map((s, i) => {
+    const url = String(s?.url || "");
+    if (!/^https:\/\/x\.com\/[^/]+\/status\/\d+/.test(url) && !/^https:\/\/x\.com\/i\/web\/status\/\d+/.test(url)) {
+      throw new ValidationError(`source[${i}].url must be an x.com status link`);
+    }
+    const kind = KINDS.has(String(s?.kind)) ? String(s.kind) : "authored";
+    const date = s?.date ? String(s.date) : null;
+    return { url, kind, date };
+  });
+
+  const window: BriefWindow = c.window === "recent" || c.window === "archive" ? c.window : "both";
+  return { person, topic, slug: briefSlug(person, topic), summaryMd, sources, window };
+}
+
+export async function createBriefFromContribution(
+  c: Contribution,
+  contributedBy: string,
+  client: string,
+): Promise<Brief> {
+  const v = validate(c);
+  const counts =
+    c.counts && typeof c.counts === "object"
+      ? c.counts
+      : v.sources.reduce<Record<string, number>>((acc, s) => ((acc[s.kind] = (acc[s.kind] || 0) + 1), acc), {});
+
   const row = {
-    person: b.person,
-    topic: b.topic,
-    slug: b.slug,
-    summary_md: b.summaryMd,
-    sources: b.sources,
-    terms: b.terms,
-    counts: b.counts,
-    model: b.model,
-    window: b.window,
-    as_of: b.asOf,
+    person: v.person,
+    topic: v.topic,
+    slug: v.slug,
+    summary_md: v.summaryMd,
+    sources: v.sources,
+    terms: Array.isArray(c.terms) ? c.terms : [],
+    counts,
+    model: (c.model || "client").slice(0, 80),
+    window: v.window,
+    as_of: c.as_of && !Number.isNaN(Date.parse(c.as_of)) ? new Date(c.as_of).toISOString() : new Date().toISOString(),
+    contributed_by: contributedBy,
+    client: (client || "unknown").slice(0, 80),
+    verified: false, // sources not yet machine-checked against X (see roadmap)
     updated_at: new Date().toISOString(),
   };
+
   const { data, error } = await supabaseAdmin()
     .from("briefs")
     .upsert(row, { onConflict: "slug" })
@@ -99,57 +163,4 @@ async function upsertBrief(b: Brief): Promise<Brief> {
     .single();
   if (error) throw new Error(error.message);
   return rowToBrief(data);
-}
-
-export type GenerateResult =
-  | { ok: true; brief: Brief; generated: boolean }
-  | { ok: false; reason: string; query?: string; notes?: string[] };
-
-export async function getOrGenerateBrief(opts: {
-  person: string;
-  topic: string;
-  window?: BriefWindow;
-  force?: boolean;
-}): Promise<GenerateResult> {
-  const person = normalizeHandle(opts.person);
-  const topic = opts.topic.trim();
-  const window: BriefWindow = opts.window || "both";
-  const slug = briefSlug(person, topic);
-
-  const existing = await getBriefBySlug(slug);
-  if (existing && !opts.force && !isStale(existing)) {
-    return { ok: true, brief: existing, generated: false };
-  }
-
-  assertGenerationEnv();
-
-  const terms = await expandQuery(topic);
-  const { tweets, query, notes } = await fetchTweets({ handle: person, terms, token: process.env.X_BEARER_TOKEN!, window });
-
-  if (!tweets.length) {
-    // Serve a stale existing brief rather than nothing, if we have one.
-    if (existing) return { ok: true, brief: existing, generated: false };
-    return { ok: false, reason: "No matching posts for this person and topic.", query, notes };
-  }
-
-  const ranked = rank(tweets);
-  const counts = ranked.reduce<Record<string, number>>((acc, t) => ((acc[t.kind] = (acc[t.kind] || 0) + 1), acc), {});
-  const summaryMd = await synthesize(person, topic, ranked);
-  const sources: Source[] = ranked.map((t) => ({ url: t.url, date: t.date, kind: t.kind }));
-
-  const brief: Brief = {
-    person,
-    topic,
-    slug,
-    summaryMd,
-    sources,
-    terms,
-    counts,
-    model: SYNTHESIS_MODEL,
-    window,
-    asOf: new Date().toISOString(),
-  };
-
-  const saved = await upsertBrief(brief);
-  return { ok: true, brief: saved, generated: true };
 }

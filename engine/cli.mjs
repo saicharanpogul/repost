@@ -30,9 +30,10 @@
 // Requires Node 18+.
 
 import { runEngine } from "./src/engine.mjs";
+import { publishBrief } from "./src/publish.mjs";
 
 function parseArgs(argv) {
-  const out = { window: "both", authoredOnly: false, synthesize: false, useCache: true, json: false, terms: null };
+  const out = { window: "both", authoredOnly: false, synthesize: false, publish: false, useCache: true, json: false, terms: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -42,6 +43,7 @@ function parseArgs(argv) {
     else if (a === "--window") out.window = next();
     else if (a === "--authored-only") out.authoredOnly = true;
     else if (a === "--synthesize") out.synthesize = true;
+    else if (a === "--publish") out.publish = true;
     else if (a === "--no-cache") out.useCache = false;
     else if (a === "--json") out.json = true;
   }
@@ -58,6 +60,8 @@ async function main() {
   if (!args.person || !args.topic) return fail("Both --person and --topic are required.");
   if (!["recent", "archive", "both"].includes(args.window)) return fail(`--window must be recent | archive | both (got "${args.window}").`);
   if (args.synthesize && !process.env.ANTHROPIC_API_KEY) return fail("--synthesize needs ANTHROPIC_API_KEY. Drop the flag for retrieval-only (no key needed).");
+  if (args.publish && !args.synthesize) return fail("--publish requires --synthesize (you publish a synthesized brief).");
+  if (args.publish && !process.env.REPOST_PUBLISH_TOKEN) return fail("--publish needs REPOST_PUBLISH_TOKEN (your contributor token).");
 
   const result = await runEngine({
     person: args.person,
@@ -98,6 +102,20 @@ async function main() {
   const tag = result.cached ? `${C.cyan}cached${C.reset}` : `fresh · ${result.mode} · ${result.usedTerms}/${result.totalTerms} terms · ${JSON.stringify(result.counts)}`;
   console.log(`${C.dim}${tag}${C.reset}`);
   if (result.notes?.length) console.log(`${C.dim}notes: ${result.notes.join("; ")}${C.reset}`);
+
+  if (args.publish && result.answer) {
+    process.stderr.write(`${C.dim}· publishing to corpus${C.reset}\n`);
+    try {
+      const data = await publishBrief(result, {
+        url: process.env.REPOST_PUBLISH_URL || "https://repost.blog",
+        token: process.env.REPOST_PUBLISH_TOKEN,
+      });
+      console.log(`${C.cyan}published:${C.reset} ${data.url}`);
+    } catch (e) {
+      err(`publish failed: ${e.message}`);
+      process.exitCode = 3;
+    }
+  }
 }
 
 function fail(msg) {

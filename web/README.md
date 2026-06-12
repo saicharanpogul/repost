@@ -1,61 +1,64 @@
 # repost.blog (web)
 
-The hosted surface: a Next.js app that publishes sourced summaries of what people
-said on X, and an open API for agents. On-demand generation, cached in Supabase.
+The **read-only** hosted surface: it renders briefs from Supabase and exposes an
+open read API. It never fetches X and never calls an LLM — generation happens on
+clients (the `../engine` MCP/CLI, on the user's own keys), which publish finished
+briefs here.
 
 ## How it works
 
 ```
-visitor/agent asks (person, topic)
-  → check Supabase for a fresh brief
-  → miss/stale: expand topic → fetch X (operator key) → synthesize (Opus 4.8)
-               → store TRANSFORMED brief (summary + source links, no raw tweets)
-  → render the blog page / return JSON
+GENERATE (client, BYO-key)                 READ (this app, no keys)
+  repost MCP/CLI fetches X + synthesizes      visitor/agent opens a page or
+  → POST /api/contribute (with a token)       hits /api/brief
+                                              → renders from Supabase
 ```
 
-Everyone after the first request reads the cached brief. The corpus assembles
-itself toward what people actually ask for.
+So the corpus crowdsources itself: each contributor, solving their own problem,
+publishes a brief that helps the next reader. Operating cost is just hosting + DB.
+
+## What the server holds
+
+- Supabase keys (anon for read, service role for the `/api/contribute` write).
+- A contributor allowlist (`REPOST_PUBLISH_TOKENS`).
+- **No X token, no Anthropic key.** Those live only on clients.
 
 ## Setup
 
-1. **Create a Supabase project**, then run `supabase/schema.sql` in its SQL editor.
-2. **Env:** copy `.env.example` to `.env.local` and fill in Supabase, X, and
-   Anthropic keys.
-3. Install and run:
-
-```bash
-npm install
-npm run dev
-```
+1. Create a Supabase project → run `supabase/schema.sql` in its SQL editor.
+2. `cp .env.example .env.local` and fill in Supabase + your contributor allowlist.
+3. `npm install && npm run dev`.
 
 ## Routes
 
 | Route | What |
 |-------|------|
-| `/` | Search + recent briefs |
+| `/` | Search (navigates to a brief) + recent briefs |
 | `/[person]` | A person's topics |
-| `/[person]/[topic]` | The brief (blog page); generates on demand if missing |
-| `/api/brief?person=&topic=` | Open JSON API (GET for agents, POST for the UI) |
-| `/sitemap.xml` | Auto from the brief corpus |
+| `/[person]/[topic]` | The brief; if missing, shows how to generate it locally |
+| `GET /api/brief?person=&topic=` | Open read API (404 if not in the corpus yet) |
+| `POST /api/contribute` | Publish a brief (Bearer token required; validated) |
+| `/sitemap.xml` | Auto from the corpus |
+
+## Provenance & trust
+
+- **Authenticated contributor.** Every publish carries a Bearer token from the
+  allowlist; the brief records `contributed_by` (the token's label) and `client`.
+  Revocable: drop the token to cut off a bad actor.
+- **Checkable sources.** `/api/contribute` rejects any brief whose `sources`
+  aren't real `x.com/.../status/...` links, so every claim points at a real post.
+- **Transformed only.** Stored = summary + source links + `as_of`. Never raw
+  tweet bodies.
+- `verified` flag is reserved for future server-side source spot-checks against X.
 
 ## Deploy (Vercel)
 
-Set the project **root directory** to `web/`, add the env vars from
-`.env.example`, and point the `repost.blog` domain at it. Generation runs in a
-serverless function (`maxDuration = 60`).
-
-## Boundaries
-
-- **Server-side keys.** Visitors never bring keys; the operator pays for reads +
-  synthesis. (Contrast the `../engine` MCP tool, which is BYO-key, no synthesis.)
-- **Stored = transformed only.** Briefs hold the summary + source links + an
-  `as-of` date. Never raw tweet bodies. Commentary that cites X, not a
-  redistributor.
-- **Public, no paywall yet.** Schema is subscription-ready; distribution first.
+Root directory = `web/`, add the env vars, point `repost.blog` at it. No
+long-running functions needed (no generation here).
 
 ## Not done yet
 
-- Auth / subscriptions ($10-20/mo gate)
-- Rate limiting on generation (currently gated behind an explicit click)
-- Background refresh of stale briefs (today: lazy, on next visit past TTL)
-- Per-person "sync enabled" opt-in flows
+- Sign in with X (real identity instead of shared tokens) for self-serve contributors
+- Server-side source spot-verification → flip `verified` to true
+- Read-side subscription ($10-20/mo) and/or rate limits
+- Moderation / takedown tooling
